@@ -9,6 +9,13 @@
           "password": "密码"
         }
       },
+      "challenge_channel": {
+        "title": "验证方式",
+        "description": "选择华为发送验证码的方式。账号为用户名或邮箱时，请改用该账号绑定的手机号登录。",
+        "data": {
+          "challenge_channel": "验证通道"
+        }
+      },
       "challenge": {
         "title": "设备验证",
         "description": "{prompt}。",
@@ -27,6 +34,7 @@
     "error": {
       "invalid_auth": "华为账号或挑战码被拒绝。",
       "cannot_connect": "无法连接华为智慧生活。",
+      "code_dispatch_failed": "华为未接受该通道的发码请求。若登录账号是用户名或邮箱，请改用绑定的手机号登录。",
       "home_required": "请至少选择一个家庭。",
       "reauth_failed": "无法重新验证华为智慧生活配置。"
     },
@@ -35,6 +43,17 @@
       "cannot_connect": "无法连接华为智慧生活。",
       "reauth_failed": "重新验证失败。",
       "unique_id_mismatch": "认证的华为账号与当前配置项不一致。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "选择家庭",
+        "description": "选择需要发现的华为家庭。",
+        "data": {
+          "selected_home_ids": "家庭"
+        }
+      }
     }
   }
 }

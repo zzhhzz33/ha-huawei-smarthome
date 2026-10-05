@@ -9,6 +9,13 @@
           "password": "Password"
         }
       },
+      "challenge_channel": {
+        "title": "Verification method",
+        "description": "Choose how Huawei should send the verification code. If you signed in with a username or email address, use the phone number bound to that account instead.",
+        "data": {
+          "challenge_channel": "Verification channel"
+        }
+      },
       "challenge": {
         "title": "Device verification",
         "description": "{prompt}.",
@@ -27,6 +34,7 @@
     "error": {
       "invalid_auth": "The Huawei account or verification code was rejected.",
       "cannot_connect": "Unable to connect to Huawei SmartHome.",
+      "code_dispatch_failed": "Huawei did not accept the code request for this channel. If you signed in with a username or email address, sign in with the phone number bound to that account instead.",
       "home_required": "Select at least one home.",
       "reauth_failed": "The Huawei SmartHome entry could not be reauthenticated."
     },
@@ -35,6 +43,17 @@
       "cannot_connect": "Unable to connect to Huawei SmartHome.",
       "reauth_failed": "Reauthentication failed.",
       "unique_id_mismatch": "The authenticated Huawei account does not match this entry."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Select homes",
+        "description": "Choose the Huawei homes to discover.",
+        "data": {
+          "selected_home_ids": "Homes"
+        }
+      }
     }
   }
 }

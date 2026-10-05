@@ -17,7 +17,12 @@ from .api.client import SmartHomeDiscoveryApi
 from .api.errors import SmartHomeApiError
 from .api.transport import AiohttpHttpTransport
 from .auth.huawei import HuaweiSmartHomeAuthProvider
-from .auth.interface import LoginChallenge
+from .auth.interface import (
+    CHALLENGE_KIND_DEVICE,
+    CHALLENGE_KIND_SMS,
+    ChallengeChannel,
+    LoginChallenge,
+)
 from .const import (
     CONF_ACCOUNT,
     CONF_IDENTITY_FINGERPRINT,
@@ -37,6 +42,12 @@ from .storage.identity import ClientIdentityStore
 
 
 _LOGGER = logging.getLogger(__name__)
+
+CONF_CHALLENGE_CHANNEL = "challenge_channel"
+
+# Email is offered by Huawei but has no working dispatch endpoint, so it is not
+# selectable: picking it would leave the user with a code that never arrives.
+_SELECTABLE_CHALLENGE_KINDS = (CHALLENGE_KIND_DEVICE, CHALLENGE_KIND_SMS)
 
 
 class HuaweiSmartHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -96,7 +107,7 @@ class HuaweiSmartHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     if result.challenge is not None:
                         self._challenge = result.challenge
-                        return await self.async_step_challenge()
+                        return await self.async_step_challenge_channel()
                     if result.session is not None:
                         self._session = result.session
                         return await self._prepare_discovery()
@@ -113,6 +124,58 @@ class HuaweiSmartHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_challenge_channel(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Let the user pick how the verification code should reach them."""
+
+        channels = _selectable_channels(self._challenge)
+        if not channels:
+            return await self.async_step_challenge()
+        if user_input is None and len(channels) == 1:
+            return await self._dispatch_channel(channels[0])
+        if user_input is not None:
+            wanted = str(user_input.get(CONF_CHALLENGE_CHANNEL, ""))
+            chosen = next(
+                (item for item in channels if item.key == wanted),
+                None,
+            )
+            if chosen is None:
+                return self.async_show_form(
+                    step_id="challenge_channel",
+                    data_schema=_channel_schema(channels),
+                    errors={"base": "code_dispatch_failed"},
+                )
+            return await self._dispatch_channel(chosen)
+        return self.async_show_form(
+            step_id="challenge_channel",
+            data_schema=_channel_schema(channels),
+        )
+
+    async def _dispatch_channel(self, channel: ChallengeChannel) -> ConfigFlowResult:
+        """Ask Huawei to send the code over the chosen channel."""
+
+        if self._provider is None:
+            return self.async_abort(reason="cannot_connect")
+        try:
+            self._challenge = await self._provider.async_select_challenge_channel(
+                channel
+            )
+        except InvalidCredentialsError:
+            return self.async_abort(reason="cannot_connect")
+        except AuthenticationError as error:
+            _LOGGER.warning(
+                "Huawei SmartHome code dispatch failed: %s",
+                error,
+            )
+            return self.async_show_form(
+                step_id="challenge_channel",
+                data_schema=_channel_schema(_selectable_channels(self._challenge)),
+                errors={"base": "code_dispatch_failed"},
+            )
+        return await self.async_step_challenge()
+
     async def async_step_challenge(
         self,
         user_input: dict[str, Any] | None = None,
@@ -122,19 +185,11 @@ class HuaweiSmartHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             code = str(user_input.get("challenge_code", "")).strip()
             if not self._provider or not code:
-                return self.async_show_form(
-                    step_id="challenge",
-                    data_schema=vol.Schema({vol.Required("challenge_code"): str}),
-                    errors={"base": "invalid_auth"},
-                )
+                return self._challenge_form("invalid_auth")
             try:
                 self._session = await self._provider.async_complete_challenge(code)
             except InvalidCredentialsError:
-                return self.async_show_form(
-                    step_id="challenge",
-                    data_schema=vol.Schema({vol.Required("challenge_code"): str}),
-                    errors={"base": "invalid_auth"},
-                )
+                return self._challenge_form("invalid_auth")
             except AuthenticationError as error:
                 _LOGGER.warning(
                     "Huawei SmartHome challenge failed: %s",
@@ -143,13 +198,19 @@ class HuaweiSmartHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="cannot_connect")
             return await self._prepare_discovery()
 
-        description_placeholders = {}
-        if self._challenge is not None:
-            description_placeholders = {"prompt": self._challenge.prompt}
+        return self._challenge_form()
+
+    def _challenge_form(self, error: str | None = None) -> ConfigFlowResult:
+        """Render the device challenge form, always with the channel prompt."""
+
+        placeholders = (
+            {"prompt": self._challenge.prompt} if self._challenge is not None else {}
+        )
         return self.async_show_form(
             step_id="challenge",
             data_schema=vol.Schema({vol.Required("challenge_code"): str}),
-            description_placeholders=description_placeholders,
+            errors={"base": error} if error else {},
+            description_placeholders=placeholders,
         )
 
     async def async_step_home(
@@ -262,6 +323,34 @@ def _home_schema(options: Mapping[str, str]) -> vol.Schema:
     """Build a multi-home selector."""
 
     return vol.Schema({vol.Required(CONF_SELECTED_HOME_IDS): cv.multi_select(options)})
+
+
+def _selectable_channels(
+    challenge: LoginChallenge | None,
+) -> tuple[ChallengeChannel, ...]:
+    """List the channels the user can actually choose from."""
+
+    if challenge is None:
+        return ()
+    usable = tuple(
+        channel
+        for channel in challenge.channels
+        if channel.kind in _SELECTABLE_CHALLENGE_KINDS
+    )
+    return usable
+
+
+def _channel_label(channel: ChallengeChannel) -> str:
+    if channel.kind == CHALLENGE_KIND_SMS:
+        return f"短信验证码 -> {channel.name}"
+    return f"已登录设备推送 -> {channel.name}"
+
+
+def _channel_schema(channels: tuple[ChallengeChannel, ...]) -> vol.Schema:
+    """Build the verification-channel selector."""
+
+    options = {channel.key: _channel_label(channel) for channel in channels}
+    return vol.Schema({vol.Required(CONF_CHALLENGE_CHANNEL): vol.In(options)})
 
 
 class HuaweiSmartHomeOptionsFlow(config_entries.OptionsFlow):
